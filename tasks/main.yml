@@ -1,0 +1,71 @@
+  - name: Install Docker in Amazon AMI Linux 2
+    yum:
+      name: docker
+      state: present
+    
+  - name: Start the docker services
+    service: 
+      name: docker
+      state: started
+      enabled: yes
+  
+  - name: Configuring repository for K8s
+    yum_repository:
+      description: kubernetes
+      name: kubernetes
+      baseurl: https://packages.cloud.google.com/yum/repos/kubernetes-el7-\$basearch
+      enabled: 1
+      gpgcheck: 1
+      repo_gpgcheck: 1
+      gpgkey: https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+      exclude: kubelet kubeadm kubectl
+    ignore_errors: yes
+ 
+  - name: Installing K8s packges 2
+    yum:
+      name: kubeadm
+      disable_excludes: kubernetes
+
+  - name: Enable kubelet services
+    command: systemctl enable --now kubelet
+  
+  - name: Downloading Images
+    command: kubeadm config images pull
+
+  - name: Change docker drivers
+    copy:
+      dest: /etc/docker/daemon.json
+      content: '{
+  "exec-opts": ["native.cgroupdriver=systemd"]
+}'
+
+  - name: Restart the docker services
+    service:
+      name: docker
+      state: restarted
+
+  - name: Download iproute-tc
+    yum:
+      name: iproute-tc
+
+  - name: Initialize the Kubernetes cluster using kubeadm
+    command: kubeadm init --pod-network-cidr=10.244.0.0/16 --ignore-preflight-errors=NumCPU --ignore-preflight-errors=Mem 
+
+  - command: "{{ item }}"
+    with_items:
+     - mkdir -p $HOME/.kube
+     - sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+    
+  - name: Setup kubeconfig continue 
+    shell:
+      cmd:  "sudo chown $(id -u):$(id -g) $HOME/.kube/config"
+
+  - name: Network container Provider Flannel
+    command:  kubectl apply  -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
+
+  - name: Generate join command
+    command: kubeadm token create --print-join-command
+    register: join_command
+
+  - name: Copy join command to local file at the specified location /home/ec2-user
+    local_action: copy content="{{ join_command.stdout_lines[0] }}" dest="./join-command"
